@@ -1210,3 +1210,5 @@ html[data-theme="light"] .btn-apple{background:#000;color:#fff;}
 .qty-step button:hover:not(:disabled){background:rgba(41,224,232,.15);} .qty-step button:disabled{opacity:.35;cursor:not-allowed;}
 .qty-step b{min-width:34px;text-align:center;font-size:1rem;}
 .qty-row small{color:var(--muted);font-size:.74rem;flex:1;min-width:120px;}
+
+.pv-sub{margin:12px 0 8px;padding-top:10px;border-top:1px dashed rgba(138,155,196,.3);font-weight:700;font-size:.82rem;color:var(--gold);letter-spacing:.3px;}

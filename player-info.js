@@ -165,74 +165,23 @@ function celebrateVerified(){
   setTimeout(() => box.remove(), 4000);
 }
 
-
 /* =====================================================================
-   GUILD LOOKUP (Glory Bots): Guild ID -> guild name / level / members / leader / region
-   Endpoints are editable in Admin -> 🔎 API Test -> "Guild API". {id} = the Guild ID. If no endpoint answers, the order is blocked
-   (a Bots order for the wrong guild can't be undone), so make sure at least one working endpoint is configured.
+   GLORY BOTS — Guild details come from the SAME player-info API as the UID checker (its "guild" section).
+   The customer enters any Guild Member's UID; we show the player (Nickname, Level, Region) and the guild (name, ID, level, members, leader).
    ===================================================================== */
-const GUILD_DEFAULT_ENDPOINTS = [{ name: 'Primary', url: 'https://auraffxserverinfocheckerapi.onrender.com/api/guild?id={id}' }];
-let GUILD_ENDPOINTS = GUILD_DEFAULT_ENDPOINTS.map(e => Object.assign({}, e));
-function setGuildEndpoints(list){
-  const ok = (Array.isArray(list) ? list : []).filter(e => e && typeof e.url === 'string' && /^https?:\/\//i.test(e.url.trim())).map(e => ({ name: String(e.name || 'API').slice(0, 30), url: e.url.trim() }));
-  GUILD_ENDPOINTS = ok.length ? ok : GUILD_DEFAULT_ENDPOINTS.map(e => Object.assign({}, e));
-}
-window.__gDiag = [];
-function gBuildUrl(id, tpl){
-  const g = String(id).replace(/\D/g, '');
-  tpl = tpl || GUILD_ENDPOINTS[0].url;
-  return tpl.indexOf('{id}') >= 0 ? tpl.replace('{id}', g) : (tpl.indexOf('{uid}') >= 0 ? tpl.replace('{uid}', g) : tpl + (tpl.indexOf('?') >= 0 ? '&' : '?') + 'id=' + g);
-}
-const G_NAME = ['guild_name', 'guildname', 'clan_name', 'clanname', 'name'];
-const G_LEVEL = ['guild_level', 'guildlevel', 'clan_level', 'clanlevel', 'level', 'lvl'];
-const G_MEMBERS = ['member_count', 'membercount', 'members_count', 'num_members', 'current_members', 'currentmembers', 'members'];
-const G_CAP = ['capacity', 'max_members', 'maxmembers', 'member_capacity', 'max_member'];
-const G_LEADER = ['leader_name', 'leadername', 'leader_nickname', 'owner_name', 'captain_name', 'leader', 'owner', 'captain'];
-const G_REGION = ['region', 'server', 'region_name', 'country'];
-const G_ID = ['guild_id', 'guildid', 'clan_id', 'clanid', 'id'];
-function gParse(d, id){
-  const root = (d && typeof d === 'object') ? (['guild', 'clan', 'guild_info', 'data', 'result'].map(k => d[k]).find(v => v && typeof v === 'object' && !Array.isArray(v)) || d) : d;
-  const name = piDeepFind(root, G_NAME);
-  if(!name) return null;
-  let leader = null;
-  for(const k of ['leader', 'owner', 'captain']){ const v = root[k]; if(v && typeof v === 'object'){ leader = piDeepFind(v, ['nickname', 'name', 'leader_name']); if(leader) break; } }
-  if(!leader) leader = piDeepFind(root, G_LEADER);
+const piStrip = t => String(t == null ? '' : t).replace(/\[(?:[0-9a-fA-F]{6}|\/?[a-zA-Z])\]/g, '').trim();
+function guildFromInfo(info){
+  const g = (info && info.raw && info.raw.guild) || null;
+  if(!g || typeof g !== 'object') return null;
+  const name = piStrip(g.name), id = g.id != null ? String(g.id) : '';
+  if(!name && !id) return null;
   const num = x => { const n = parseInt(String(x == null ? '' : x).replace(/\D/g, ''), 10); return isFinite(n) ? n : null; };
-  let members = piDeepFind(root, G_MEMBERS);
-  if(Array.isArray(root.members)) members = root.members.length;
-  return { ok: true, id: String(piDeepFind(root, G_ID) || id), name: piClean(name), level: num(piDeepFind(root, G_LEVEL)), members: num(members), capacity: num(piDeepFind(root, G_CAP)),
-    leader: leader ? piClean(leader) : '', region: piClean(piDeepFind(root, G_REGION) || piDeepFind(d, G_REGION)).toUpperCase(), raw: d };
+  return { id, name, level: num(g.level), members: num(g.member_count), capacity: num(g.capacity), leader: piStrip(g.leader_name), leaderUid: g.leader_uid != null ? String(g.leader_uid) : '' };
 }
-async function gAttempt(id, ep){
-  const ctl = new AbortController(), t0 = Date.now(), timer = setTimeout(() => ctl.abort(), PLAYER_INFO_TIMEOUT_MS);
-  const diag = { name: ep.name, url: ep.url, status: null, ms: 0, error: null, sample: '' };
-  window.__gDiag.push(diag);
-  try{
-    const r = await fetch(gBuildUrl(id, ep.url), { signal: ctl.signal, cache: 'no-store' });
-    diag.status = r.status;
-    const raw = await r.text(); diag.sample = raw.slice(0, 160);
-    let d = null; try{ d = JSON.parse(raw); }catch(e){}
-    if(!d){ diag.error = 'not JSON'; return { retry: true }; }
-    const info = gParse(d, id);
-    if(info) return { info };
-    if(d.success === false || d.ok === false || d.error || /not\s*found|invalid|no\s*guild|no\s*clan/i.test(JSON.stringify(d).slice(0, 400))) return { notFound: true };
-    diag.error = 'no guild in response'; return { retry: true };
-  }catch(e){ diag.error = e && e.name === 'AbortError' ? 'timeout' : 'network / CORS blocked'; return { retry: true }; }
-  finally{ clearTimeout(timer); diag.ms = Date.now() - t0; }
-}
-async function lookupGuildInfo(id){
-  id = String(id).replace(/\D/g, ''); window.__gDiag = [];
-  for(const ep of GUILD_ENDPOINTS){
-    let res = await gAttempt(id, ep);
-    if(res.retry){ await new Promise(r => setTimeout(r, 2500)); res = await gAttempt(id, ep); }
-    if(res.info) return res.info;
-    if(res.notFound) return { ok: false, error: 'not_found' };
-  }
-  return { ok: false, error: 'unavailable' };
-}
-function guildCardHtml(g){
-  const rows = [['🏰', 'Guild Name', g.name], ['🆔', 'Guild ID', g.id], ['⭐', 'Level', g.level != null ? 'Lv ' + g.level : null],
-    ['👥', 'Members', g.members != null ? g.members + (g.capacity ? ' / ' + g.capacity : '') : null], ['👑', 'Leader', g.leader], ['🌍', 'Region', g.region]].filter(r => r[2] != null && r[2] !== '');
-  return `<div class="pv-card"><div class="pv-head"><span class="pv-tick">✅</span><div><b>Guild Verified</b><small>Guild details successfully loaded</small></div></div>
-    <div class="pv-rows">${rows.map(r => `<div class="pv-row"><span>${r[0]} ${r[1]}</span><b>${pvEsc(r[2])}</b></div>`).join('')}</div></div>`;
+function guildMemberCardHtml(info, g, uid){
+  const row = (ic, k, v) => (v == null || v === '') ? '' : `<div class="pv-row"><span>${ic} ${k}</span><b>${pvEsc(v)}</b></div>`;
+  return `<div class="pv-card"><div class="pv-head"><span class="pv-tick">✅</span><div><b>Guild Verified</b><small>Member UID ${pvEsc(uid)}</small></div></div>
+    <div class="pv-rows">${row('👤', 'Nickname', info.nickname)}${row('⭐', 'Level', info.level ? 'Lv ' + info.level : '')}${row('🌍', 'Region', info.region)}</div>
+    <div class="pv-sub">🏰 Guild</div>
+    <div class="pv-rows">${row('🏰', 'Guild Name', g.name)}${row('🆔', 'Guild ID', g.id)}${row('⭐', 'Guild Level', g.level != null ? 'Lv ' + g.level : '')}${row('👥', 'Members', g.members != null ? g.members + (g.capacity ? ' / ' + g.capacity : '') : '')}${row('👑', 'Leader', g.leader)}</div></div>`;
 }
